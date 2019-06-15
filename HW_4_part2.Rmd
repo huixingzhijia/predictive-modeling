@@ -1,0 +1,187 @@
+---
+title: "HW_4"
+author: "Wenhui Zeng"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: pdf_document
+---
+
+```{r ,include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE,comment = "",fig.width=12, fig.height=8,fig.align="center")
+```
+
+
+2) We will focus on answering the following question: ‘Is the median life expectancy in
+2007 for Asia, Americas, Europe, and Africa significantly different from each other? Estimate the median life expectancy in 2007 for Asia, Americas, Europe, and Africa, and bootstrap confidence intervals for each continent.’
+
+```{r}
+library(gapminder)
+library(foreach)
+library(doParallel)
+library(data.table)
+library(ggplot2)
+
+df <- data.table(gapminder)
+df_median <- df[,.(median_life=median(lifeExp)),by="country"]
+```
+
+
+b. For the following bootstrapped approach, implement both a parallel version using foreach(), and a non-parallel version using foreach(). Time the difference in the approaches. You can simply use Sys.time() as I did in the lecture.
+
+Now bootstrap a distribution of 100,000 possible medians for each continent. You should end up with 4 separate distributions of medians (you must do this separately for each continent – in class, we only did a single bootstrapped distribution).
+
+## Single Run without Stratify Continent
+
+```{r,eval=F}
+n_boot <- 100
+time_1 <- Sys.time()
+result2 <- 
+  foreach(i=1:n_boot,
+          .combine='c') %do% {
+    temp_result = df[sample(.N,replace = T),
+                                 median(lifeExp,na.rm=T)]
+    temp_result
+  }
+time_2 <- Sys.time()
+time_diff <- time_2-time_1
+
+time_2 <- Sys.time()
+result2 <- 
+  foreach(i=1:n_boot,
+          .combine='c',.packages = 'data.table') %dopar% {
+    temp_result = df[sample(.N,replace = T),
+                                 median(lifeExp,na.rm=T)]
+    temp_result
+  }
+time_3 <- Sys.time()
+time_diff <- time_3-time_2
+
+```
+
+## Non-parallel Function
+
+```{r}
+n_boot = 1e5
+#gc()
+
+regular.bootstrap <- function(continent){
+start_time <- Sys.time()
+result1 <- 
+  foreach(i=1:n_boot, .combine='c') %do% {
+    temp_result = df[df$continent==continent][sample(.N,replace = T),
+                                 median(lifeExp,na.rm=T)]
+    temp_result
+  }
+time_1 <- Sys.time()
+time_diff_regular <- time_1-start_time
+print(paste("The time different using non-parallel method for continent",continent,"is",time_diff_regular))
+return(result1)
+}
+#regular.bootstrap("Asia")
+c_list <- list("Asia","Europe","Africa","Americas","Oceania")
+a <- lapply(c_list,regular.bootstrap)
+non_parallel_data <- data.frame(do.call(cbind,a))
+colnames(non_parallel_data ) <- c_list
+```
+
+## parallel Way the lapply function not working so I run it one by one
+
+```{r}
+## detect available cores
+#detectCores()
+## make cluster with 3 cores
+cl <- makeCluster(4)
+## register cluster so foreach will work in parallel
+registerDoParallel(cl)
+
+start_time <- Sys.time()
+result1 <- 
+  foreach(i=1:n_boot, .combine='c',.packages = "data.table") %dopar% {
+    temp_result = df[df$continent=="Asia"][sample(.N,replace = T),
+                                 median(lifeExp,na.rm=T)]
+    temp_result
+  }
+time_1 <- Sys.time()
+time_diff_regular <- time_1-start_time
+print(paste("The time different using parallel method for continent","Asia","is",time_diff_regular))
+
+start_time <- Sys.time()
+result2 <- 
+  foreach(i=1:n_boot, .combine='c',.packages = "data.table") %dopar% {
+    temp_result = df[df$continent=="Europe"][sample(.N,replace = T),
+                                 median(lifeExp,na.rm=T)]
+    temp_result
+  }
+time_1 <- Sys.time()
+time_diff_regular <- time_1-start_time
+print(paste("The time different using parallel method for continent","Africa","is",time_diff_regular)) 
+            
+start_time <- Sys.time()
+result3 <- 
+  foreach(i=1:n_boot, .combine='c',.packages = "data.table") %dopar% {
+    temp_result = df[df$continent=="Africa"][sample(.N,replace = T),
+                                 median(lifeExp,na.rm=T)]
+    temp_result
+  }
+time_1 <- Sys.time()
+time_diff_regular <- time_1-start_time
+print(paste("The time different using parallel method for continent","Europe","is",time_diff_regular))
+
+
+start_time <- Sys.time()
+result4 <- 
+  foreach(i=1:n_boot, .combine='c',.packages = "data.table") %dopar% {
+    temp_result = df[df$continent=="Americas"][sample(.N,replace = T),
+                                 median(lifeExp,na.rm=T)]
+    temp_result
+  }
+time_1 <- Sys.time()
+time_diff_regular <- time_1-start_time
+print(paste("The time different using parallel method for continent","Americas","is",time_diff_regular))
+
+start_time <- Sys.time()
+result5 <- 
+  foreach(i=1:n_boot, .combine='c',.packages = "data.table") %dopar% {
+    temp_result = df[df$continent=="Oceania"][sample(.N,replace = T),
+                                 median(lifeExp,na.rm=T)]
+    temp_result
+  }
+time_1 <- Sys.time()
+time_diff_regular <- time_1-start_time
+print(paste("The time different using parallel method for continent","Oceania","is",time_diff_regular))
+
+parellel.data <- data.frame(cbind(result1,result2,result3,result4,result5))
+colnames(parellel.data) <- c_list
+```
+
+d. Summarize the 95% of these 4 distributions by calculating the 2.5% quantile and the 97.5% quantile. This is done separately for each continent (each distribution). You can just directly calculate this using the quantile function in R like so: quantile(sample, c(.975,.025))
+
+I choose non-parallel data to calculate the confidence interval.
+
+```{r}
+Asian <- quantile(non_parallel_data$Asia,c(.975,.025))
+Europe <- quantile(non_parallel_data$Europe,c(.975,.025))
+Africa <- quantile(non_parallel_data$Africa,c(.975,.025))
+Americas <- quantile(non_parallel_data$Americas,c(.975,.025))
+Oceania <- quantile(non_parallel_data$Oceania,c(.975,.025))
+```
+
+The 95% confidence interval for Asian is (`r Asian[1]`,`r Asian[2]`).
+
+The 95% confidence interval for Europe is (`r Europe[1]`,`r Europe[2]`).
+
+The 95% confidence interval for Africa is (`r Africa[1]`,`r Africa[2]`).
+
+The 95% confidence interval for Americas is (`r Americas[1]`,`r Americas[2]`).
+
+The 95% confidence interval for Oceania is (`r Oceania[1]`,`r Oceania[2]`).
+
+e. Create a separate histogram for each of the 4 distributions. Stack these distributions on top of each other. This is easily done with ggplot2 and facet_grid if the data is all in one dataframe in a long format with a group indicator. Here is sample code (without the bootstrap part!):
+
+
+```{r}
+data_long <- melt(non_parallel_data,value.name="median",variable.name="continent")
+ggplot(data_long,
+aes(x=median)) + geom_histogram(aes(y=..density..),fill="blue",bins = 50) + facet_grid(continent~.)+theme_bw()
+  
+
+````

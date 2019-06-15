@@ -1,0 +1,151 @@
+---
+title: "Homework2"
+author: "Wenhui Zeng"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE,comment = "",fig.width=12, fig.height=8,fig.align="center")
+```
+
+## R Markdown
+
+```{r}
+library(data.table)
+library(lubridate)
+library(zoo)
+clinic <- fread("Clinic.csv")
+diseasemap <- fread("DiseaseMap.csv")
+icdcodes<- fread("ICDCodes.csv")
+insuranceprovider <- fread("InsuranceProvider.csv")
+mortality <- fread("Mortality.csv")
+OutpatientVisit <- fread("OutpatientVisit.csv")
+Patient <- fread("Patient.csv")
+PatientAnalytic <- fread("PatientAnalyticFile.csv")
+patientInsurance <- fread("PatientInsurance.csv")
+staff <- fread("Staff.csv")
+```
+
+Q1. Are men more likely to die than women in this group of patients? Assume people without a date of death in the mortality table are still alive.
+
+```{r}
+patient <- Patient[Patient$Gender!="MISSING" & Gender!="",]
+df <- merge(patient,mortality,by="PatientID",all.x = T)
+df$dead <- ifelse(is.na(df$DateOfDeath),"Yes","No")
+df <- setDT(df)
+df[,list(mort_rate=sum(dead == "Yes")/.N),by=Gender ]
+```
+
+Actually women more likely to die than men in this group of patients.
+
+2) I am interested to know if there are patterns in the disease groups across gender. For every patient with at least one outpatient visit, identify if they have been diagnosed with any of the 22 conditions listed in the diseaseMap table at any time point. You will need to consider all three ICD columns in the outpatientVisit file (not just one). Create a table with the rate of disease for each condition for men, women, and all. It should look like this, where the XX% is the percent with the condition:
+
+
+```{r}
+data.wide <- OutpatientVisit[,list(PatientID,ICD10_1,ICD10_2,ICD10_3)]
+dt1_long <-
+  melt(data.wide,
+       id.vars = 'PatientID',
+       variable.name = 'Original ICD',
+       value.name = 'ICD10')
+
+
+dt1_long$ICD10 <- as.factor(dt1_long$ICD10)
+
+dt_long <- dt1_long[,list(PatientID,ICD10)]
+#setkey(dt_long,"PatientID","ICD10")
+dt_long <- dt_long[!duplicated(dt1_long) &!ICD10=="",]
+
+df <- merge(diseasemap, dt_long,by="ICD10")
+data <- merge(df,patient[,list(PatientID,Gender)],by="PatientID")
+pct.all <- data[, .(All = uniqueN(PatientID)/.N), by = list(Condition)]
+pct.gender.long <- data[, .(Percentage = uniqueN(PatientID)/.N), by = list(Gender,Condition)]
+
+pct.gender.wide <- dcast(pct.gender.long,Condition~Gender)
+
+merge(pct.all,pct.gender.wide,by="Condition")
+```
+
+
+3) Calculate the mortality rate for every year between 2005 and 2018. Is it generally increasing, or decreasing? Assume patients are only at risk of death as of their first visit (in the outpatient Visit file). Once they have died, they are no longer at risk in subsequent years...
+a. This is a harder question to answer than at first glance. What should the denominator of patients be for every year? How will you calculate it?
+
+```{r}
+class(OutpatientVisit)
+df.risk <- unique(OutpatientVisit[,.(first_visit=min(VisitDate)),by=PatientID])
+# data %>% 
+#     group_by(State) %>% 
+#     slice(which.min(Employees)) %>% unique()
+df.p <- merge(Patient[,"PatientID"],df.risk,by="PatientID",all.x = T)
+
+df.p$at_risk <- ifelse(is.na(df.p$first_visit),0,1)
+
+df.risk.death <- merge(df.p,mortality,by="PatientID",all.x=T)
+```
+
+
+```{r}
+df.risk.death$first_visit <- ifelse(is.na(df.risk.death$first_visit)& df.risk.death$at_risk==0,df.risk.death$DateOfDeath,df.risk.death$first_visit)
+
+df.risk.death$first_visit <- ymd(df.risk.death$first_visit)
+df.risk.death$DateOfDeath <- ymd(df.risk.death$DateOfDeath)
+df.risk.death$atriskyear <- year(df.risk.death$first_visit)
+df.risk.death$deathyear <- year(df.risk.death$DateOfDeath)
+df.risk.death$death <- ifelse(is.na(df.risk.death$DateOfDeath),0,1)
+df.risk.death$time_diff <- as.numeric(df.risk.death$deathyear)-as.numeric(df.risk.death$atriskyear)
+
+```
+
+
+
+```{r}
+median(df.risk.death$time_diff,na.rm = T)
+df.risk.death$atriskyear <- ifelse(is.na(df.risk.death$first_visit)& df.risk.death$at_risk==1,df.risk.death$deathyear-2,df.risk.death$atriskyear)
+
+
+
+
+every.year.dead <- df.risk.death[death==1,.(num_death=sum(death)),by="deathyear"][order(deathyear)]
+``` 
+
+The challenge is calculating how many people at risk each year. We treat each person at risk till the year he/she died.
+
+```{r}
+at.risk.data <- df.risk.death[df.risk.death$at_risk==1 &!is.na(df.risk.death$DateOfDeath), .(PatientID,atriskyear,deathyear,at_risk)]
+at.risk.data.long <- melt(at.risk.data,
+                          id.vars = c("PatientID","at_risk"),
+                          variable.name = "risk or dead",
+                          value.name = "Year")
+
+
+merge.function <- function(key){
+  df <- at.risk.data.long[PatientID==key]
+  hh <- data.frame(Year=seq(min(df$Year), max(df$Year), by=1))
+  df.1 <- merge(df,hh,by="Year",all=T)
+  df.1 <- na.locf(na.locf(df.1), fromFirst = TRUE)
+  return(df.1)
+}
+
+a <- lapply(unique(at.risk.data.long$PatientID), merge.function)
+at.risk.df <- do.call(rbind,a)
+risk <- at.risk.df[Year>=2005,list(num_at_risk=.N), by="Year"][order(Year)]
+every.year.dead$deathyear <- as.factor(every.year.dead$deathyear)
+data.all <- merge(risk,every.year.dead,by.x="Year",by.y="deathyear")
+data.all$mortality_rate <- data.all$num_death/data.all$num_at_risk
+plot(data.all$Year,data.all$mortality_rate)
+```
+
+
+## Clarification
+
+1) Mortality Rate calculate as : people who died/people who at risk for every year.
+
+2) If a patient never went to hospital and suddenly died. I treated them at risk at the year of their death year.
+
+3) Also, a patient is still at risk of the his/her death year.
+
+4) For patients who have first visit, but their first visit date is missing. I used their death year substract median time difference (2 year) to impute their first visit year. If these patients don't have a death year and visit the hospital. They are not at risk they will not be used in calculation. The median time difference was the time difference from people first visit to death. 
+
+Yes the mortality rate is increased every year. 
+
